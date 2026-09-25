@@ -1,0 +1,7 @@
+{
+  "resources": [
+    {"name": "namespace", "kind": "Namespace", "spec": {"tier": "backend"}},
+    {"name": "config", "kind": "ConfigMap", "dependsOn": ["namespace"], "spec": {"logLevel": "info"}},
+    {"name": "deploy", "kind": "Deployment", "dependsOn": ["config"], "spec": {"replicas": 2, "image": "app:v1"}}
+  ]
+}
