@@ -40,7 +40,7 @@ func (p *Plan) Empty() bool { return len(p.Steps) == 0 }
 // String 以稳定格式输出计划，便于日志与测试比对。
 func (p *Plan) String() string {
 	if p.Empty() {
-		return "plan: (无变更)"
+		return "plan: (无变更)\n"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "plan: baseVersion=%d\n", p.BaseVersion)

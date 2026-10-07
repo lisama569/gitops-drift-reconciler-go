@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lisama569/gitops-drift-reconciler-go/internal/decl"
@@ -55,4 +57,50 @@ func TestSnapshotIsolation(t *testing.T) {
 	if len(s.Keys()) != 1 {
 		t.Fatal("快照应与存储隔离")
 	}
+}
+
+// 多执行者并发创建同一资源：基于同一快照版本，只能有一个成功，
+// 其余必须得到明确的 ErrConflict，不允许静默覆盖或各自都以为成功。
+func TestConcurrentCreateSameKey(t *testing.T) {
+	const workers = 16
+	s := New()
+	_, base := s.Snapshot()
+
+	var success, conflict int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			res := decl.Resource{Kind: "App", Name: "a", Spec: map[string]string{"writer": string(rune('A' + i))}}
+			_, err := s.Apply(res, base)
+			switch {
+			case err == nil:
+				atomic.AddInt32(&success, 1)
+			case errors.Is(err, ErrConflict):
+				atomic.AddInt32(&conflict, 1)
+			default:
+				t.Errorf("意外错误: %v", err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	t.Logf("并发创建同一资源: 成功=%d 冲突=%d", success, conflict)
+	if success != 1 || conflict != workers-1 {
+		t.Fatalf("应恰好 1 个成功、%d 个冲突，实际 成功=%d 冲突=%d", workers-1, success, conflict)
+	}
+	// 最终只有一条记录，内容完整（不存在写一半的交错状态）。
+	records, ver := s.Snapshot()
+	if len(records) != 1 {
+		t.Fatalf("应只有 1 条记录: %v", s.Keys())
+	}
+	rec := records["App/a"]
+	if len(rec.Resource.Spec) != 1 || rec.Resource.Spec["writer"] == "" {
+		t.Fatalf("记录应完整: %+v", rec)
+	}
+	t.Logf("最终状态: version=%d 记录=%+v", ver, rec.Resource)
 }
