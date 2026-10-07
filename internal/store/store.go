@@ -17,6 +17,10 @@ import (
 // ErrConflict 表示写入时版本冲突（实际状态已被并发修改）。
 var ErrConflict = errors.New("store: 版本冲突，实际状态已被修改")
 
+// ErrAlreadyExists 表示并发创建同一资源时本执行者未获胜：
+// 资源已被其他执行者创建，本次创建被明确拒绝而非静默覆盖。
+var ErrAlreadyExists = errors.New("store: 资源已存在，创建冲突")
+
 // Record 是实际状态中的一条资源记录。
 type Record struct {
 	Resource decl.Resource
@@ -57,6 +61,22 @@ func (s *Store) Apply(res decl.Resource, baseVersion uint64) (uint64, error) {
 	}
 	s.version++
 	s.records[res.Key()] = Record{Resource: res, Version: s.version}
+	return s.version, nil
+}
+
+// CreateIfAbsent 原子地创建资源：仅当 key 不存在时写入。
+// 多个执行者同时创建同一资源时，只有一个成功，其余返回
+// ErrAlreadyExists（明确冲突），不会静默覆盖或各自都以为成功。
+// 返回写入后的全局版本。
+func (s *Store) CreateIfAbsent(res decl.Resource) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := res.Key()
+	if _, exists := s.records[key]; exists {
+		return s.version, fmt.Errorf("%w: %s", ErrAlreadyExists, key)
+	}
+	s.version++
+	s.records[key] = Record{Resource: res, Version: s.version}
 	return s.version, nil
 }
 
